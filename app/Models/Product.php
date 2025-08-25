@@ -26,9 +26,10 @@ class Product extends Model
         'return_policy',
         'minimum_order_quantity',
         'category_id',
+        'barcode',
+        'qr_code',
         'thumbnail'
     ];
-
     protected $casts = [
         'dimensions' => 'array',
     ];
