@@ -5,11 +5,13 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\support\Str;
-
+use Illuminate\Support\Facades\Validator;
 use App\Models\Product;
 use App\Models\Tag;
 use App\Models\ProductImage;
 use App\Models\Category;
+use App\Models\Review;
+use App\Http\Resources\ProductResource;
 
 class ProductController extends Controller
 {
@@ -18,38 +20,52 @@ class ProductController extends Controller
      */
     public function index(Request $request)
     {
-        $limit = $request->query('limit', 30);
-        $skip = $request->query('skip', 0);
-        $select = $request->query('select');
+        $validator = Validator::make($request->all(), [
+            'limit' => 'integer|min:1|max:100',
+            'skip' => 'integer|min:0',
+            'select' => 'string',
+            'sortBy' => 'string|in:id,title,price,created_at',
+            'order' => 'string|in:asc,desc',
+        ]);
 
+        if ($validator->fails()) {
+            return response()->json(['error' => $validator->errors()], 422);
+        }
+        $limit = (int) $request->get('limit', 30);
+        $skip  = (int) $request->get('skip', 0);
+        $sortBy = $request->get('sortBy', 'id');
+        $order = strtolower($request->get('order', 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        $select = $request->get('select');
+        $query = Product::query();
         if ($select) {
             $columns = array_map('trim', explode(',', $select));
             if (!in_array('id', $columns)) {
-                array_unshift($columns, 'id');
+                array_unshift($columns, 'id', 'title');
             }
-
-            $query = Product::select($columns);
+            $query->select($columns);
+            $total = $query->count();
+            $products = $query->skip($skip)->take($limit)->orderBy($sortBy, $order)->get();
+            return response()->json([
+                'products' => $products,
+                'total' => $total,
+                'skip' => $skip,
+                'limit' => $limit,
+            ]);
         } else {
-            $query = Product::with(['category', 'images', 'tags', 'reviews']);
+            $query->with(['category', 'images', 'tags', 'reviews', 'brand', 'dimensions']);
         }
-
-        $sortBy = $request->query('sortBy', 'id');
-        $order  = strtolower($request->query('order', 'asc')) === 'desc' ? 'desc' : 'asc';
-        $allowedColumns = ['id', 'title', 'price', 'stock', 'rating'];
-        if (!in_array($sortBy, $allowedColumns)) {
-            $sortBy = 'id';
-        }
-        $query->orderBy($sortBy, $order);
 
         $total = $query->count();
-        $products = $query->skip($skip)->take($limit)->get();
+        $products = $query->skip($skip)->take($limit)->orderBy($sortBy, $order)->get();
 
         return response()->json([
-            'products' => $products,
+            'products' => ProductResource::collection($products),
             'total' => $total,
-            'skip' => (int)$skip,
-            'limit' => (int)$limit,
+            'skip' => $skip,
+            'limit' => $limit,
         ]);
+
     }
 
     /**
@@ -58,18 +74,18 @@ class ProductController extends Controller
 
     public function search(Request $request)
     {
-        $q = $request->query('q');
-        if (!$q) {
-            return response()->json([
-                'products' => [],
-                'total' => 0,
-                'skip' => 0,
-                'limit' => 0
-            ]);
+        $validator = Validator::make($request->all(), [
+            'q' => 'required|string',
+            'limit' => 'integer|min:1|max:100',
+            'skip' => 'integer|min:0',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['error' => $validator->errors()], 422);
         }
+        $q = $request->query('q');
 
-        $limit = $request->query('limit', 30);
-        $skip = $request->query('skip', 0);
+        $limit = (int) $request->get('limit', 30);
+        $skip  = (int) $request->get('skip', 0);
 
         $query = Product::with('category:id,name')
         ->where(function ($builder) use ($q) {
@@ -91,16 +107,11 @@ class ProductController extends Controller
             ->get(['id', 'title', 'category_id']);
 
 
-        $products->each(function ($product) {
-            $product->category = $product->category ? $product->category->name : null;
-            unset($product->category_id);
-        });
-
         return response()->json([
             'products' => $products,
             'total' => $total,
-            'skip' => (int) $skip,
-            'limit' => (int) $limit,
+            'skip' => $skip,
+            'limit' => $limit,
         ]);
     }
 
@@ -109,15 +120,13 @@ class ProductController extends Controller
      */
     public function store(Request $request)
     {
-        $data = $request->validate([
+        $data = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
             'description' => 'required|string',
-            'category' => 'required|string|max:255',
+            'category_id' => 'required',
+            'brand_id' => 'required',
             'price' => 'required|numeric|min:0',
-            'discount_percentage' => 'nullable|numeric|min:0|max:100',
-            'rating' => 'nullable|numeric|min:0|max:5',
             'stock' => 'required|integer|min:0',
-            'brand' => 'nullable|string|max:255',
             'sku' => 'nullable|string|max:100',
             'weight' => 'nullable|numeric|min:0',
 
@@ -126,16 +135,6 @@ class ProductController extends Controller
             'dimensions.height' => 'nullable|numeric|min:0',
             'dimensions.depth' => 'nullable|numeric|min:0',
 
-            // extra info
-            'warranty_information' => 'nullable|string|max:500',
-            'shipping_information' => 'nullable|string|max:500',
-            'availability_status' => 'nullable|string|max:100',
-            'return_policy' => 'nullable|string|max:500',
-            'minimum_order_quantity' => 'nullable|integer|min:1',
-
-            // meta fields directly in product table
-            'barcode' => 'nullable|string|max:100',
-            'qr_code' => 'nullable|string',
 
             // thumbnail & images
             'thumbnail' => 'nullable|url',
@@ -146,28 +145,31 @@ class ProductController extends Controller
             'tags' => 'nullable|array',
             'tags.*' => 'nullable|string|max:100'
         ]);
-        $category = Category::firstOrCreate(['name' => Str::title($data['category'])],
-            ['slug' => Str::slug($data['category'])]);
-
-        $productData = collect($data)->except(['category','images', 'tags'])->toArray();
-        $productData['category_id'] = $category->id;
+        if ($data->fails()) {
+            return response()->json(['error' => $data->errors()], 422);
+        }
+        $validated = $data->validated();
+        $productData = collect($validated)->except(['images', 'tags', 'dimensions'])->toArray();
         $product = Product::create($productData);
-        // To store images
-        if (!empty($data['images'])) {
-            foreach ($data['images'] as $imageUrl) {
+        //store images
+        if (!empty($validated['images'])) {
+            foreach ($validated['images'] as $imageUrl) {
                 $product->images()->create(['url' => $imageUrl]);
             }
         }
         // To store or create tags
-        if (!empty($data['tags'])) {
+        if (!empty($validated['tags'])) {
             $tagIds = [];
-            foreach ($data['tags'] as $tagName) {
+            foreach ($validated['tags'] as $tagName) {
                 $tag = Tag::firstOrCreate(['name' => $tagName]);
                 $tagIds[] = $tag->id;
             }
             $product->tags()->sync($tagIds);
         }
-        return response()->json($product->load(['category', 'images', 'tags']), 201);
+        if (!empty($validated['dimensions'])) {
+            $product->dimensions()->create($validated['dimensions']);
+        }
+        return response()->json($product->load(['category','brand', 'images', 'tags', 'dimensions']), 201);
     }
 
     /**
@@ -175,9 +177,11 @@ class ProductController extends Controller
      */
     public function show(string $id)
     {
-        $product = Product::with(['category','images','tags','reviews'])
+        $product = Product::with(['category','brand','images','tags','reviews', 'dimensions'])
             ->findOrFail($id);
-        return response()->json($product);
+        return response()->json([
+            'product' => new ProductResource($product),
+        ]);
     }
 
     /**
@@ -187,19 +191,17 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
 
-        $data = $request->validate([
+        $data = Validator::make($request->all(),[
             'title' => 'sometimes|required|string|max:255',
             'description' => 'sometimes|required|string',
             'category_id' => 'sometimes|required|exists:categories,id',
+            'brand_id' => 'sometimes|required|exists:brands,id',
             'price' => 'sometimes|required|numeric|min:0',
             'discountPercentage' => 'nullable|numeric|min:0|max:100',
             'rating' => 'nullable|numeric|min:0|max:5',
             'stock' => 'nullable|integer|min:0',
-            'brand' => 'nullable|string|max:255',
-            'sku' => 'nullable|string|max:100',
             'weight' => 'nullable|numeric|min:0',
 
-            // dimensions as JSON object fields
             'dimensions.width' => 'nullable|numeric|min:0',
             'dimensions.height' => 'nullable|numeric|min:0',
             'dimensions.depth' => 'nullable|numeric|min:0',
@@ -223,27 +225,35 @@ class ProductController extends Controller
             'tags' => 'nullable|array',
             'tags.*' => 'nullable|string|max:100',
         ]);
+        $validated = $data->validated();
+        $productData = collect($validated)->except(['tags','images','dimensions'])->toArray();
+        $product->update($productData);
 
-        $product->update($data);
+        if (isset($validated['dimensions'])) {
+            if ($product->dimension) {
+                $product->dimension()->update($validated['dimensions']);
+            } else {
+                $product->dimension()->create($validated['dimensions']);
+            }
+        }
 
-        // handle tags separately if provided
-        if ($request->has('tags')) {
+        if (!empty($validated['images'])) {
+            $product->images()->delete();
+            foreach ($validated['images'] as $url) {
+                $product->images()->create(['url' => $url]);
+            }
+        }
+
+        if (!empty($validated['tags'])) {
             $tagIds = [];
-            foreach ($request->tags as $tagName) {
+            foreach ($validated['tags'] as $tagName) {
                 $tag = Tag::firstOrCreate(['name' => $tagName]);
                 $tagIds[] = $tag->id;
             }
             $product->tags()->sync($tagIds);
         }
 
-        // handle images separately if provided
-        if ($request->has('images')) {
-            foreach ($request->images as $url) {
-                $product->images()->create(['url' => $url]);
-            }
-        }
-
-        return response()->json($product->load(['category', 'images', 'tags', 'reviews']));
+        return response()->json(new ProductResource($product->load(['category','brand','dimensions','images','tags','reviews'])));
     }
 
 
@@ -253,16 +263,16 @@ class ProductController extends Controller
     public function destroy(string $id)
     {
         $product = Product::findOrFail($id);
+        $product->tags()->detach();
         $product->delete();
 
         return response()->json([
             'id' => $product->id,
             'title' => $product->title,
             'isDeleted' => true,
-            'deletedOn' => now()->toISOString(),
+            'deletedOn'  => now()->toISOString(),
         ]);
+
     }
 
-
-    // Custom Methods
 }

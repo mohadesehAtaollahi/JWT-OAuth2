@@ -16,23 +16,23 @@ class Product extends Model
         'discount_percentage',
         'rating',
         'stock',
-        'brand',
         'sku',
         'weight',
-        'dimensions',
         'warranty_information',
         'shipping_information',
         'availability_status',
         'return_policy',
         'minimum_order_quantity',
         'category_id',
+        'brand_id',
         'barcode',
         'qr_code',
         'thumbnail'
     ];
-    protected $casts = [
-        'dimensions' => 'array',
-    ];
+    public function brand()
+    {
+        return $this->belongsTo(Brand::class);
+    }
 
     public function category()
     {
@@ -52,5 +52,9 @@ class Product extends Model
     public function reviews()
     {
         return $this->hasMany(Review::class);
+    }
+    public function dimensions()
+    {
+        return $this->hasOne(ProductDimension::class);
     }
 }

@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Category;
 use App\Models\Product;
+use App\Http\Resources\CategoryResource;
+use App\Http\Resources\ProductResource;
+use Illuminate\Support\Facades\Validator;
 
 class CategoryController extends Controller
 {
@@ -14,18 +17,8 @@ class CategoryController extends Controller
      */
     public function index()
     {
-
         $categories = Category::orderBy('name')->get(['slug', 'name']);
-
-        $data = $categories->map(function ($cat) {
-            return [
-                'slug' => $cat->slug,
-                'name' => $cat->name,
-                'url'  => url("/api/products/category/{$cat->slug}"),
-            ];
-        });
-
-        return response()->json($data);
+        return CategoryResource::collection($categories);
     }
 
     /**
@@ -44,32 +37,30 @@ class CategoryController extends Controller
      */
     public function productsByCategory(Request $request, string $slug)
     {
-        $category = Category::where('slug', $slug)->firstOrFail();
-
+        $validator = Validator::make($request->all(),
+            ['limit' => 'integer|min:1|max:100',
+            'skip' => 'integer|min:0',]
+        );
+        if ($validator->fails()) {
+            return response()->json(['error' => $validator->errors()], 422);
+        }
         $limit  = (int) $request->query('limit', 30);
         $skip   = (int) $request->query('skip', 0);
 
+        $category = Category::where('slug', $slug)->firstOrFail();
         $baseQuery = Product::where('category_id', $category->id);
-
         $total = $baseQuery->count();
 
         $products = $baseQuery
-            ->with(['category', 'images', 'tags', 'reviews'])
+            ->with(['category','brand', 'images', 'tags', 'reviews', 'dimensions'])
             ->skip($skip)
             ->take($limit)
-            ->get()
-            ->map(function ($p) use ($category) {
-                $arr = $p->toArray();
-                $arr['category'] = $category->slug;
-                unset($arr['category_id']);
-                return $arr;
-            });
-
+            ->get();
         return response()->json([
-            'products' => $products,
-            'total'    => $total,
-            'skip'     => $skip,
-            'limit'    => $limit,
+            'products' => ProductResource::collection($products),
+            'total' => $total,
+            'skip' => $skip,
+            'limit' => $limit,
         ]);
     }
 

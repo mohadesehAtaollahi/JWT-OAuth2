@@ -14,10 +14,9 @@ return new class extends Migration
         Schema::create('reviews', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_id')->constrained()->onDelete('cascade');
+            $table->foreignId('user_id')->nullable()->constrained()->onDelete('set null');
             $table->integer('rating');
             $table->text('comment')->nullable();
-            $table->string('reviewer_name');
-            $table->string('reviewer_email');
             $table->timestamp('review_date')->useCurrent();
             $table->timestamps();
         });
@@ -28,6 +27,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('reviews');
+        Schema::dropIfExists('review');
     }
 };

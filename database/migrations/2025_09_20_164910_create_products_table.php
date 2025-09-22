@@ -13,33 +13,33 @@ return new class extends Migration
     {
         Schema::create('products', function (Blueprint $table) {
             $table->id();
-            $table->string('title');
+            $table->string('title', 255);
             $table->text('description')->nullable();
             $table->foreignId('category_id')->constrained()->onDelete('cascade');
             $table->decimal('price', 10, 2);
-            $table->decimal('discount_percentage', 5, 2)->default(0); // مثال: 12.50%
-            $table->decimal('rating', 3, 2)->default(0); // مثال: 4.95
+            $table->decimal('discount_percentage', 5, 2)->default(0);
+            $table->decimal('rating', 3, 2)->default(0);
             $table->integer('stock');
-            $table->string('brand')->nullable();
-            $table->string('sku')->unique();
+            $table->foreignId('brand_id')->nullable()->constrained('brands')->onDelete('set null');
+            $table->string('sku', 255)->unique();
             $table->integer('weight')->nullable();
 
-            //dimensions in one column
-            $table->json('dimensions')->nullable();
 
-            $table->string('warranty_information')->nullable();
-            $table->string('shipping_information')->nullable();
-            $table->string('availability_status')->nullable();
-            $table->string('return_policy')->nullable();
+            $table->string('warranty_information', 255)->nullable();
+            $table->string('shipping_information', 255)->nullable();
+            $table->string('availability_status', 50)->nullable();
+            $table->string('return_policy', 255)->nullable();
             $table->integer('minimum_order_quantity')->default(1);
 
             // meta
-            $table->string('barcode')->nullable();
-            $table->string('qr_code')->nullable();
+            $table->string('barcode', 255)->nullable();
+            $table->string('qr_code', 1000)->nullable();
             $table->timestamps();
 
             //image
-            $table->string('thumbnail')->nullable();
+            $table->string('thumbnail', 1000)->nullable();
+
+            $table->index('sku');
         });
     }
 
